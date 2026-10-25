@@ -21,7 +21,7 @@ jobs:
 
     - name: Fetch compiler from data branch
       run: |
-        git fetch --depth=1 origin data || true
+        git fetch --depth=1 origin +data:refs/remotes/origin/data || true
         if git rev-parse --verify origin/data >/dev/null 2>&1; then
           mkdir -p bin
           git show origin/data:bin/ruleset-compiler > bin/ruleset-compiler
@@ -31,17 +31,29 @@ jobs:
     - name: Run script
       run: ./mod.sh
 
-    - name: Publish out+bin to data branch (single commit)
+    - name: Commit outputs to data branch
       run: |
         git config user.email "action@github.com"
         git config user.name "GitHub Action"
-        git fetch --depth=1 origin data || true
+        git fetch --depth=1 origin +data:refs/remotes/origin/data || true
         INDEX="$PWD/.build_index"
         rm -f "$INDEX"
         GIT_INDEX_FILE="$INDEX" git add -f out bin/ruleset-compiler
-        TREE=$(GIT_INDEX_FILE="$INDEX" git write-tree)
-        COMMIT=$(git commit-tree "$TREE" -m "update")
-        git push --force origin "$COMMIT:data"
+        NEW_TREE=$(GIT_INDEX_FILE="$INDEX" git write-tree)
+        OLD_COMMIT=$(git rev-parse --verify origin/data 2>/dev/null || true)
+        OLD_TREE=$(git rev-parse --verify origin/data^{tree} 2>/dev/null || true)
+        if [ -n "$OLD_TREE" ] && [ "$NEW_TREE" = "$OLD_TREE" ]; then
+          echo "No changes to commit"
+          exit 0
+        fi
+        if [ -z "$OLD_COMMIT" ] || \
+           [ "$(git log -1 --format=%cd --date=format:%Y-%m "$OLD_COMMIT")" != "$(date -u +%Y-%m)" ]; then
+          COMMIT=$(git commit-tree "$NEW_TREE" -m "update")
+          git push -f origin "$COMMIT:data"
+        else
+          COMMIT=$(git commit-tree "$NEW_TREE" -p "$OLD_COMMIT" -m "update")
+          git push origin "$COMMIT:data"
+        fi
 
     - name: Delete Workflow Runs
       uses: Mattraks/delete-workflow-runs@v2
